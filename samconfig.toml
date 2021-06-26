@@ -1,0 +1,9 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "web-flask-dev"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-4p4h1y64d09m"
+s3_prefix = "web-flask-dev"
+region = "us-east-2"
+capabilities = "CAPABILITY_IAM"

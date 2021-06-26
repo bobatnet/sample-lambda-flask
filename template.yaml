@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  web-flask
+
+  Sample SAM Template for web-flask
+
+Parameters:
+  Stage:
+    Type: String
+    Default: Dev
+  LoginDomainName:
+    Type: String
+    Default: hellotrials
+
+Globals:
+  Function:
+    Timeout: 3
+    Runtime: python3.8
+    CodeUri: source/
+    Environment:
+      Variables:
+        STAGENAME: !Ref Stage
+        APPLICATION_ROOT: !Sub "/${Stage}"
+
+Resources:
+  Users:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      LambdaConfig:
+        PreSignUp: !GetAtt ValidateUserSignUp.Arn
+      UsernameAttributes:
+        - email
+
+  LoginClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - email
+        - openid
+      ClientName: hellouser
+      CallbackURLs:
+        - !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/home/"
+      DefaultRedirectURI: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/home/"
+      GenerateSecret: true
+      UserPoolId: !Ref Users
+      SupportedIdentityProviders:
+        - COGNITO
+
+  ValidateSignIn:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: hello_world.auth_validator.lambda_handler
+
+  ValidateUserSignUp:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: hello_world.signup.signup_validate_handler
+
+  LoginDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref LoginDomainName
+      UserPoolId: !Ref Users
+
+  MyApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Dev
+      Auth:
+        Authorizers:
+          SignedInAuthorizer:
+            FunctionArn: !GetAtt HelloAuth.Arn
+            FunctionPayloadType: REQUEST
+            Identity:
+              QueryStrings:
+                - code
+          PostSignedInAuthorizer:
+            FunctionArn: !GetAtt HelloAuth.Arn
+            FunctionPayloadType: REQUEST
+            Identity:
+              Headers:
+                - Cookie
+        DefaultAuthorizer: SignedInAuthorizer
+
+  ApiGatewayUnauthorized:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${MyApi}.execute-api.${AWS::Region}.amazonaws.com'"
+        gatewayresponse.header.Location: !Sub "'https://${LoginDomainName}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${LoginClient}&response_type=code&scope=email+openid&redirect_uri=https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/home/'"
+      RestApiId: !Ref MyApi
+      ResponseType: DEFAULT_4XX
+      StatusCode: "302"
+
+  ApiGatewayRelogin:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${MyApi}.execute-api.${AWS::Region}.amazonaws.com'"
+        gatewayresponse.header.Location: !Sub "'https://${LoginDomainName}.auth.${AWS::Region}.amazoncognito.com/login?client_id=${LoginClient}&response_type=code&scope=email+openid&redirect_uri=https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/home/'"
+      RestApiId: !Ref MyApi
+      ResponseType: UNAUTHORIZED
+      StatusCode: "302"
+
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: hello_world.lambda.lambda_handler
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: get
+            RestApiId: !Ref MyApi
+            Auth:
+              Authorizer: PostSignedInAuthorizer
+
+  LoggedInFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: hello_world.lambda.lambda_handler
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            Path: /home
+            Method: get
+            RestApiId: !Ref MyApi
+
+  TokenCookieSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      GenerateSecretString:
+        SecretStringTemplate: "{}"
+        GenerateStringKey: "token"
+        PasswordLength: 64
+
+  HelloAuth:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: hello_world.auth_validator.lambda_handler
+      Environment:
+        Variables:
+          DOMAIN_NAME: !Ref LoginDomainName
+          STACK_NAME: !Ref AWS::StackName
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - "cognito-idp:DescribeUserPoolClient"
+                - "cloudformation:DescribeStackResource"
+              Resource: "*"
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - "ssm:GetParameter"
+              Resource: !Ref TokenCookieSecret
+
+Outputs:
+  HelloWorldApi:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/home/"
+  HelloWorldFunction:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt HelloWorldFunction.Arn
+  HelloWorldFunctionIamRole:
+    Description: "Implicit IAM Role created for Hello World function"
+    Value: !GetAtt HelloWorldFunctionRole.Arn
